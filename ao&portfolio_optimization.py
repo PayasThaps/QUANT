@@ -1,29 +1,22 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import statsmodels.api as sm
 import streamlit as st
 import plotly.graph_objs as go
 from scipy.optimize import minimize
 import time
-from functools import lru_cache
-import traceback
 
-# Function to download stock data with retries and caching
-@lru_cache(maxsize=32)
+# Function to download stock data with retries and caching using Streamlit's cache
+@st.cache_data
 def download_data_with_retry(ticker, start_date, end_date, retries=5, delay=5):
     for i in range(retries):
         try:
             data = yf.download(ticker, start=start_date, end=end_date)
             if not data.empty:
-                print(f"Successfully downloaded data for {ticker}, {len(data)} records.")
                 return data
         except Exception as e:
-            print(f"Attempt {i+1} failed for {ticker}: {e}")
-        time.sleep(delay)
-    print(f"All attempts to download data for {ticker} failed.")
+            time.sleep(delay)
     return pd.DataFrame()  # Return empty DataFrame if all retries fail
-
 
 # List of NIFTY 50 companies and their sectors
 nifty50_stocks = {
@@ -46,10 +39,10 @@ nifty50_stocks = {
 }
 
 # Parameters
-market_ticker = '^NSEI'  # NIFTY 50 Index
+market_ticker = '^NSEI'
 risk_free_rate = 0.0677  # Risk-free rate (e.g., 6.77%)
-start_date = '2020-01-01'
-end_date = '2024-01-01'
+start_date_default = '2020-01-01'
+end_date_default = '2024-01-01'
 
 # Streamlit app layout
 st.title("NIFTY 50 CAPM & Industry-wise Analysis Dashboard")
@@ -57,8 +50,13 @@ st.title("NIFTY 50 CAPM & Industry-wise Analysis Dashboard")
 # Sidebar inputs
 st.sidebar.header("User Input")
 selected_sector = st.sidebar.selectbox('Select Sector:', list(set(nifty50_stocks.values())), index=0)
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime(start_date))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime(end_date))
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime(start_date_default))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime(end_date_default))
+
+# Validate dates
+if start_date > end_date:
+    st.error("End date must be after the start date.")
+    st.stop()
 
 # Investment and Risk input
 investment_amount = st.sidebar.number_input("Investment Amount (₹):", min_value=1000, value=100000, step=1000)
@@ -119,11 +117,15 @@ if stock_data_dict:
         target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
         efficient_frontier = []
         for target_return in target_returns:
-            ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                              {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
-            result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
-                              method='SLSQP', bounds=bounds, constraints=ef_constraints)
-            efficient_frontier.append(result['fun'])
+            try:
+                ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                                  {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
+                result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
+                                  method='SLSQP', bounds=bounds, constraints=ef_constraints)
+                efficient_frontier.append(result['fun'])
+            except Exception as e:
+                st.error(f"Error in optimization for return {target_return}: {str(e)}")
+                continue
 
         # Plot Efficient Frontier
         st.subheader("Efficient Frontier")
@@ -148,7 +150,9 @@ def awesome_oscillator(stock_data):
     ao = median_price.rolling(window=5).mean() - median_price.rolling(window=34).mean()
     return ao
 
-for stock, data in stock_data_dict.items():
-    ao = awesome_oscillator(data)
-    st.subheader(f"Awesome Oscillator for {stock}")
-    st.line_chart(ao)
+# Display AO for a selected stock
+if stock_data_dict:
+    selected_stock = st.sidebar.selectbox('Select Stock for Awesome Oscillator:', list(stock_data_dict.keys()), index=0)
+    ao_data = awesome_oscillator(stock_data_dict[selected_stock])
+    st.subheader(f"Awesome Oscillator for {selected_stock}")
+    st.line_chart(ao_data)
