@@ -1,0 +1,10 @@
+yfinance
+streamlit
+pandas 
+numpy 
+statsmodels
+plotly
+scipy
+time
+functools
+traceback
