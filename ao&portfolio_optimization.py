@@ -4,6 +4,7 @@ import yfinance as yf
 import streamlit as st
 import plotly.graph_objs as go
 from scipy.optimize import minimize
+import requests
 import time
 
 # Function to download stock data with retries and caching using Streamlit's cache
@@ -38,37 +39,50 @@ nifty50_stocks = {
     'DABUR.NS': 'Consumer Goods'
 }
 
-# Parameters
-market_ticker = '^NSEI'
-risk_free_rate = 0.0677  # Risk-free rate (e.g., 6.77%)
-start_date_default = '2020-01-01'
-end_date_default = '2024-01-01'
+# OpenAI API function for ChatGPT integration
+def get_gpt_analysis(api_key, prompt):
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {api_key}',
+    }
+    json_data = {
+        'model': 'gpt-3.5-turbo',
+        'messages': [{'role': 'user', 'content': prompt}],
+        'temperature': 0.7,
+    }
+    response = requests.post('https://api.openai.com/v1/chat/completions', headers=headers, json=json_data)
+    if response.status_code == 200:
+        return response.json()['choices'][0]['message']['content']
+    else:
+        return f"Error: {response.status_code}, {response.text}"
 
 # Streamlit app layout
-st.title("NIFTY 50 CAPM & Industry-wise Analysis Dashboard")
+st.title("NIFTY 50 CAPM & Industry-wise Analysis Dashboard with ChatGPT Integration")
 
 # Sidebar inputs
 st.sidebar.header("User Input")
 selected_sector = st.sidebar.selectbox('Select Sector:', list(set(nifty50_stocks.values())), index=0)
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime(start_date_default))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime(end_date_default))
+start_date = st.sidebar.date_input("Start Date", pd.to_datetime('2020-01-01'))
+end_date = st.sidebar.date_input("End Date", pd.to_datetime('2024-01-01'))
 
 # Validate dates
 if start_date > end_date:
     st.error("End date must be after the start date.")
     st.stop()
 
+# OpenAI API key (directly integrated based on your request)
+api_key = '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'
+
 # Investment and Risk input
 investment_amount = st.sidebar.number_input("Investment Amount (₹):", min_value=1000, value=100000, step=1000)
 risk_tolerance = st.sidebar.slider("Risk Tolerance (0-1):", 0.0, 1.0, 0.5)
 
 # Download market data
-market_data = download_data_with_retry(market_ticker, start_date, end_date)
+market_data = download_data_with_retry('^NSEI', start_date, end_date)
 
 # Filter stocks by selected sector
 stocks = [stock for stock, sector in nifty50_stocks.items() if sector == selected_sector]
 
-# Stock data dictionary
 stock_data_dict = {}
 for stock in stocks:
     stock_data = download_data_with_retry(stock, start_date, end_date)
@@ -104,7 +118,7 @@ if stock_data_dict:
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
 
         # Optimize portfolio
-        optimized_result = minimize(negative_sharpe_ratio, initial_weights, args=(mean_returns, cov_matrix, risk_free_rate),
+        optimized_result = minimize(negative_sharpe_ratio, initial_weights, args=(mean_returns, cov_matrix, 0.0677),
                                     method='SLSQP', bounds=bounds, constraints=constraints)
         optimal_weights = optimized_result.x
 
@@ -113,54 +127,16 @@ if stock_data_dict:
         portfolio_df = pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights})
         st.write(portfolio_df)
 
-        # Efficient frontier
-        target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
-        efficient_frontier = []
-        for target_return in target_returns:
-            try:
-                ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                                  {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
-                result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
-                                  method='SLSQP', bounds=bounds, constraints=ef_constraints)
-                efficient_frontier.append(result['fun'])
-            except Exception as e:
-                st.error(f"Error in optimization for return {target_return}: {str(e)}")
-                continue
+        # Generate the prompt for ChatGPT analysis
+        prompt = f"Analyze the portfolio with these weights: {portfolio_df.to_string()}.\n" \
+                 f"Consider the current market data and suggest improvements based on {investment_amount} investment " \
+                 f"with a risk tolerance of {risk_tolerance}. Also, provide insights on market trends in the {selected_sector} sector."
 
-        # Plot Efficient Frontier
-        st.subheader("Efficient Frontier")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=efficient_frontier, y=target_returns, mode='lines', name='Efficient Frontier'))
-        st.plotly_chart(fig)
-
-        # Suggestion based on risk tolerance and Sharpe ratio
-        sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)[2]
-        if sharpe_ratio > risk_tolerance:
-            st.write("The portfolio has a good risk-adjusted return. Consider investing.")
-        else:
-            st.write("The portfolio may not meet your risk-adjusted return expectations. Consider adjusting your allocation.")
+        # Get analysis from ChatGPT
+        analysis = get_gpt_analysis(api_key, prompt)
+        st.subheader("GPT-3 Analysis and Suggestions")
+        st.write(analysis)
 
 else:
     st.write("No stock data available for the selected sector.")
 
-# Generic Technical Indicator Function
-def calculate_indicator(stock_data, indicator_name):
-    if indicator_name == 'AO':
-        median_price = (stock_data['High'] + stock_data['Low']) / 2
-        return median_price.rolling(window=5).mean() - median_price.rolling(window=34).mean()
-    elif indicator_name == 'RSI':
-        delta = stock_data['Adj Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-    else:
-        return pd.Series()
-
-# Display AO or RSI for a selected stock
-if stock_data_dict:
-    selected_stock = st.sidebar.selectbox('Select Stock for Technical Indicator:', list(stock_data_dict.keys()), index=0)
-    selected_indicator = st.sidebar.selectbox("Select Indicator:", ['AO', 'RSI'])
-    indicator_data = calculate_indicator(stock_data_dict[selected_stock], selected_indicator)
-    st.subheader(f"{selected_indicator} for {selected_stock}")
-    st.line_chart(indicator_data)
