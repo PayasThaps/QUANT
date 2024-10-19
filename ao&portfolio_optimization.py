@@ -73,6 +73,7 @@ nifty50_stocks = {
 
 # Parameters
 market_ticker = '^NSEI'
+risk_free_rate = 0.0677  # Risk-free rate (e.g., 6.77%)
 start_date_default = '2020-01-01'
 end_date_default = '2024-01-01'
 
@@ -93,7 +94,11 @@ if start_date > end_date:
     st.error("End date must be after the start date.")
     st.stop()
 
-# Download stock data with selected interval
+# Investment and Risk input
+investment_amount = st.sidebar.number_input("Investment Amount (₹):", min_value=1000, value=100000, step=1000)
+risk_tolerance = st.sidebar.slider("Risk Tolerance (0-1):", 0.0, 1.0, 0.5)
+
+# Download market data with selected interval
 market_data = download_data_with_retry(market_ticker, start_date, end_date, interval)
 
 # Filter stocks by selected sector
@@ -135,8 +140,69 @@ if stock_data_dict:
     st.subheader(f"RSI for {selected_stock}")
     st.line_chart(rsi_data)
 
+    # Portfolio Optimization and CAPM Analysis (using all available stock data)
+    stock_data = pd.DataFrame({ticker: stock['Adj Close'] for ticker, stock in stock_data_dict.items()})
+    stock_returns = stock_data.pct_change().dropna()
+    market_returns = market_data['Adj Close'].pct_change().dropna()
+
+    # Align stock and market data
+    stock_returns, market_returns = stock_returns.align(market_returns, join='inner', axis=0)
+
+    if not stock_returns.empty and not market_returns.empty:
+        # Vectorized portfolio statistics calculation
+        def portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate):
+            portfolio_return = np.dot(weights, mean_returns)  # Vectorized for return
+            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))  # Vectorized volatility
+            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
+            return portfolio_return, portfolio_volatility, sharpe_ratio
+
+        def negative_sharpe_ratio(weights, mean_returns, cov_matrix, risk_free_rate):
+            return -portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)[2]
+
+        # Optimization setup
+        mean_returns = stock_returns.mean() * 252
+        cov_matrix = stock_returns.cov() * 252
+        num_stocks = len(mean_returns)
+        initial_weights = np.array([1.0 / num_stocks] * num_stocks)
+        bounds = tuple((0, 1) for _ in range(num_stocks))
+        constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+
+        # Optimize portfolio
+        optimized_result = minimize(negative_sharpe_ratio, initial_weights, args=(mean_returns, cov_matrix, risk_free_rate),
+                                    method='SLSQP', bounds=bounds, constraints=constraints)
+        optimal_weights = optimized_result.x
+
+        # Display portfolio performance
+        st.subheader("Optimal Portfolio Weights")
+        portfolio_df = pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights})
+        st.write(portfolio_df)
+
+        # Efficient frontier
+        target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
+        efficient_frontier = []
+        for target_return in target_returns:
+            try:
+                ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                                  {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
+                result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
+                                  method='SLSQP', bounds=bounds, constraints=ef_constraints)
+                efficient_frontier.append(result['fun'])
+            except Exception as e:
+                st.error(f"Error in optimization for return {target_return}: {str(e)}")
+                continue
+
+        # Plot Efficient Frontier
+        st.subheader("Efficient Frontier")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=efficient_frontier, y=target_returns, mode='lines', name='Efficient Frontier'))
+        st.plotly_chart(fig)
+
+        # Suggestion based on risk tolerance and Sharpe ratio
+        sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)[2]
+        if sharpe_ratio > risk_tolerance:
+            st.write("The portfolio has a good risk-adjusted return. Consider investing.")
+        else:
+            st.write("The portfolio may not meet your risk-adjusted return expectations. Consider adjusting your allocation.")
+
 else:
     st.write("No stock data available for the selected sector.")
-
-
-
