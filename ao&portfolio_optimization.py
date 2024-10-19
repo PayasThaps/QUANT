@@ -51,6 +51,12 @@ def analyze_ao(ao_value):
     else:
         return 'Neutral', 'Hold'
 
+# Function to calculate the Beta of a stock
+def calculate_beta(stock_returns, market_returns):
+    covariance_matrix = np.cov(stock_returns, market_returns)
+    beta = covariance_matrix[0, 1] / covariance_matrix[1, 1]
+    return beta
+
 # List of NIFTY 50 companies and their sectors
 nifty50_stocks = {
     'RELIANCE.NS': 'Energy', 'TCS.NS': 'IT', 'HDFCBANK.NS': 'Financials', 'INFY.NS': 'IT',
@@ -162,6 +168,14 @@ if stock_data_dict:
             # Minimize risk for low risk tolerance, maximize return for high risk tolerance
             return (1 - risk_tolerance) * portfolio_volatility - risk_tolerance * portfolio_return
 
+        # Calculate betas for each stock
+        betas = {stock: calculate_beta(stock_returns[stock], market_returns) for stock in stock_returns.columns}
+
+        # Display Betas
+        st.subheader("Betas for Selected Stocks")
+        beta_df = pd.DataFrame(list(betas.items()), columns=['Stock', 'Beta'])
+        st.write(beta_df)
+
         # Optimization setup
         mean_returns = stock_returns.mean() * 252
         cov_matrix = stock_returns.cov() * 252
@@ -217,4 +231,3 @@ if stock_data_dict:
 
 else:
     st.write("No stock data available for the selected sector.")
-
