@@ -172,10 +172,19 @@ if stock_data_dict:
                                     method='SLSQP', bounds=bounds, constraints=constraints)
         optimal_weights = optimized_result.x
 
+        # Calculate portfolio return, volatility, and Sharpe ratio
+        portfolio_return, portfolio_volatility, sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)
+
         # Display portfolio performance
         st.subheader("Optimal Portfolio Weights")
         portfolio_df = pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights})
         st.write(portfolio_df)
+
+        # Display portfolio quantification
+        st.subheader("Portfolio Quantification")
+        st.write(f"**Expected Annual Return**: {portfolio_return:.2%}")
+        st.write(f"**Annual Volatility (Risk)**: {portfolio_volatility:.2%}")
+        st.write(f"**Sharpe Ratio**: {sharpe_ratio:.2f}")
 
         # Efficient frontier
         target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
@@ -198,7 +207,6 @@ if stock_data_dict:
         st.plotly_chart(fig)
 
         # Suggestion based on risk tolerance and Sharpe ratio
-        sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)[2]
         if sharpe_ratio > risk_tolerance:
             st.write("The portfolio has a good risk-adjusted return. Consider investing.")
         else:
