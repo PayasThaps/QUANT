@@ -68,6 +68,7 @@ market_data = download_data_with_retry(market_ticker, start_date, end_date)
 # Filter stocks by selected sector
 stocks = [stock for stock, sector in nifty50_stocks.items() if sector == selected_sector]
 
+# Stock data dictionary
 stock_data_dict = {}
 for stock in stocks:
     stock_data = download_data_with_retry(stock, start_date, end_date)
@@ -84,22 +85,21 @@ if stock_data_dict:
     stock_returns, market_returns = stock_returns.align(market_returns, join='inner', axis=0)
 
     if not stock_returns.empty and not market_returns.empty:
-        # Calculate mean returns and covariance matrix
-        mean_returns = stock_returns.mean() * 252
-        cov_matrix = stock_returns.cov() * 252
-
-        # Optimization setup for portfolio
+        # Vectorized portfolio statistics calculation
         def portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate):
-            portfolio_return = np.sum(mean_returns * weights)
-            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+            portfolio_return = np.dot(weights, mean_returns)  # Vectorized for return
+            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))  # Vectorized volatility
             sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
             return portfolio_return, portfolio_volatility, sharpe_ratio
 
         def negative_sharpe_ratio(weights, mean_returns, cov_matrix, risk_free_rate):
             return -portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)[2]
 
+        # Optimization setup
+        mean_returns = stock_returns.mean() * 252
+        cov_matrix = stock_returns.cov() * 252
         num_stocks = len(mean_returns)
-        initial_weights = num_stocks * [1.0 / num_stocks]
+        initial_weights = np.array([1.0 / num_stocks] * num_stocks)
         bounds = tuple((0, 1) for _ in range(num_stocks))
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
 
@@ -143,16 +143,24 @@ if stock_data_dict:
 else:
     st.write("No stock data available for the selected sector.")
 
-# Add Awesome Oscillator for trends
-def awesome_oscillator(stock_data):
-    # Calculate Awesome Oscillator using the high and low prices
-    median_price = (stock_data['High'] + stock_data['Low']) / 2
-    ao = median_price.rolling(window=5).mean() - median_price.rolling(window=34).mean()
-    return ao
+# Generic Technical Indicator Function
+def calculate_indicator(stock_data, indicator_name):
+    if indicator_name == 'AO':
+        median_price = (stock_data['High'] + stock_data['Low']) / 2
+        return median_price.rolling(window=5).mean() - median_price.rolling(window=34).mean()
+    elif indicator_name == 'RSI':
+        delta = stock_data['Adj Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    else:
+        return pd.Series()
 
-# Display AO for a selected stock
+# Display AO or RSI for a selected stock
 if stock_data_dict:
-    selected_stock = st.sidebar.selectbox('Select Stock for Awesome Oscillator:', list(stock_data_dict.keys()), index=0)
-    ao_data = awesome_oscillator(stock_data_dict[selected_stock])
-    st.subheader(f"Awesome Oscillator for {selected_stock}")
-    st.line_chart(ao_data)
+    selected_stock = st.sidebar.selectbox('Select Stock for Technical Indicator:', list(stock_data_dict.keys()), index=0)
+    selected_indicator = st.sidebar.selectbox("Select Indicator:", ['AO', 'RSI'])
+    indicator_data = calculate_indicator(stock_data_dict[selected_stock], selected_indicator)
+    st.subheader(f"{selected_indicator} for {selected_stock}")
+    st.line_chart(indicator_data)
