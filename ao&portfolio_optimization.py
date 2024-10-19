@@ -156,8 +156,11 @@ if stock_data_dict:
             sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
             return portfolio_return, portfolio_volatility, sharpe_ratio
 
-        def negative_sharpe_ratio(weights, mean_returns, cov_matrix, risk_free_rate):
-            return -portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)[2]
+        # Optimization function to adjust based on risk appetite
+        def optimize_for_risk(weights, mean_returns, cov_matrix, risk_tolerance, risk_free_rate):
+            portfolio_return, portfolio_volatility, _ = portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)
+            # Minimize risk for low risk tolerance, maximize return for high risk tolerance
+            return (1 - risk_tolerance) * portfolio_volatility - risk_tolerance * portfolio_return
 
         # Optimization setup
         mean_returns = stock_returns.mean() * 252
@@ -167,8 +170,8 @@ if stock_data_dict:
         bounds = tuple((0, 1) for _ in range(num_stocks))
         constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
 
-        # Optimize portfolio
-        optimized_result = minimize(negative_sharpe_ratio, initial_weights, args=(mean_returns, cov_matrix, risk_free_rate),
+        # Optimize portfolio based on risk tolerance
+        optimized_result = minimize(optimize_for_risk, initial_weights, args=(mean_returns, cov_matrix, risk_tolerance, risk_free_rate),
                                     method='SLSQP', bounds=bounds, constraints=constraints)
         optimal_weights = optimized_result.x
 
@@ -214,3 +217,4 @@ if stock_data_dict:
 
 else:
     st.write("No stock data available for the selected sector.")
+
