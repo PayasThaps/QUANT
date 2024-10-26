@@ -44,7 +44,9 @@ def analyze_rsi(rsi_value):
 
 # Function to analyze Awesome Oscillator (AO)
 def analyze_ao(ao_value):
-    if ao_value > 0:
+    if np.isnan(ao_value):
+        return 'Neutral', 'Hold'
+    elif ao_value > 0:
         return 'Bullish', 'Buy signal'
     elif ao_value < 0:
         return 'Bearish', 'Sell signal'
@@ -113,8 +115,8 @@ if stock_data_dict:
     rsi_data = calculate_rsi(stock_data)
 
     # Latest AO and RSI values
-    latest_ao = ao_data.iloc[-1]
-    latest_rsi = rsi_data.iloc[-1]
+    latest_ao = ao_data.iloc[-1] if not ao_data.empty else np.nan
+    latest_rsi = rsi_data.iloc[-1] if not rsi_data.empty else np.nan
 
     # Analyze AO and RSI
     ao_signal, ao_trend = analyze_ao(latest_ao)
