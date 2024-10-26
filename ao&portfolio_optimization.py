@@ -27,8 +27,8 @@ def awesome_oscillator(stock_data):
 # Function to calculate RSI
 def calculate_rsi(stock_data, periods=14):
     delta = stock_data['Adj Close'].diff()
-    gain = delta.where(delta > 0, 0).rolling(window=periods).mean()
-    loss = -delta.where(delta < 0, 0).rolling(window=periods).mean()
+    gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
@@ -44,9 +44,7 @@ def analyze_rsi(rsi_value):
 
 # Function to analyze Awesome Oscillator (AO)
 def analyze_ao(ao_value):
-    if np.isnan(ao_value):
-        return 'Neutral', 'Hold'
-    elif ao_value > 0:
+    if ao_value > 0:
         return 'Bullish', 'Buy signal'
     elif ao_value < 0:
         return 'Bearish', 'Sell signal'
@@ -62,7 +60,21 @@ def calculate_beta(stock_returns, market_returns):
 # List of NIFTY 50 companies and their sectors
 nifty50_stocks = {
     'RELIANCE.NS': 'Energy', 'TCS.NS': 'IT', 'HDFCBANK.NS': 'Financials', 'INFY.NS': 'IT',
-    # Add remaining stocks and sectors as per the provided list
+    'ICICIBANK.NS': 'Financials', 'HINDUNILVR.NS': 'Consumer Goods', 'ITC.NS': 'Consumer Goods',
+    'KOTAKBANK.NS': 'Financials', 'SBIN.NS': 'Financials', 'LT.NS': 'Infrastructure',
+    'BHARTIARTL.NS': 'Telecom', 'AXISBANK.NS': 'Financials', 'HDFC.NS': 'Financials',
+    'BAJFINANCE.NS': 'Financials', 'ASIANPAINT.NS': 'Consumer Goods', 'MARUTI.NS': 'Automobile',
+    'HCLTECH.NS': 'IT', 'WIPRO.NS': 'IT', 'ULTRACEMCO.NS': 'Cement', 'ONGC.NS': 'Energy',
+    'TITAN.NS': 'Consumer Goods', 'BAJAJFINSV.NS': 'Financials', 'SUNPHARMA.NS': 'Pharmaceuticals',
+    'NTPC.NS': 'Energy', 'NESTLEIND.NS': 'Consumer Goods', 'POWERGRID.NS': 'Energy',
+    'TATAMOTORS.NS': 'Automobile', 'M&M.NS': 'Automobile', 'ADANIENT.NS': 'Conglomerate',
+    'INDUSINDBK.NS': 'Financials', 'HINDALCO.NS': 'Metals', 'JSWSTEEL.NS': 'Metals',
+    'DIVISLAB.NS': 'Pharmaceuticals', 'DRREDDY.NS': 'Pharmaceuticals', 'GRASIM.NS': 'Cement',
+    'BPCL.NS': 'Energy', 'BRITANNIA.NS': 'Consumer Goods', 'CIPLA.NS': 'Pharmaceuticals',
+    'HEROMOTOCO.NS': 'Automobile', 'COALINDIA.NS': 'Metals', 'EICHERMOT.NS': 'Automobile',
+    'APOLLOHOSP.NS': 'Healthcare', 'TATACONSUM.NS': 'Consumer Goods', 'SBILIFE.NS': 'Insurance',
+    'ICICIGI.NS': 'Insurance', 'HDFCLIFE.NS': 'Insurance', 'TECHM.NS': 'IT', 'BAJAJ-AUTO.NS': 'Automobile',
+    'DABUR.NS': 'Consumer Goods'
 }
 
 # Parameters
@@ -115,8 +127,8 @@ if stock_data_dict:
     rsi_data = calculate_rsi(stock_data)
 
     # Latest AO and RSI values
-    latest_ao = ao_data.iloc[-1] if not ao_data.empty else np.nan
-    latest_rsi = rsi_data.iloc[-1] if not rsi_data.empty else np.nan
+    latest_ao = ao_data.iloc[-1]
+    latest_rsi = rsi_data.iloc[-1]
 
     # Analyze AO and RSI
     ao_signal, ao_trend = analyze_ao(latest_ao)
@@ -143,6 +155,27 @@ if stock_data_dict:
     stock_returns, market_returns = stock_returns.align(market_returns, join='inner', axis=0)
 
     if not stock_returns.empty and not market_returns.empty:
+        # Vectorized portfolio statistics calculation
+        def portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate):
+            portfolio_return = np.dot(weights, mean_returns)  # Vectorized for return
+            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))  # Vectorized volatility
+            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
+            return portfolio_return, portfolio_volatility, sharpe_ratio
+
+        # Optimization function to adjust based on risk appetite
+        def optimize_for_risk(weights, mean_returns, cov_matrix, risk_tolerance, risk_free_rate):
+            portfolio_return, portfolio_volatility, _ = portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)
+            # Minimize risk for low risk tolerance, maximize return for high risk tolerance
+            return (1 - risk_tolerance) * portfolio_volatility - risk_tolerance * portfolio_return
+
+        # Calculate betas for each stock
+        betas = {stock: calculate_beta(stock_returns[stock], market_returns) for stock in stock_returns.columns}
+
+        # Display Betas
+        st.subheader("Betas for Selected Stocks")
+        beta_df = pd.DataFrame(list(betas.items()), columns=['Stock', 'Beta'])
+        st.write(beta_df)
+
         # Optimization setup
         mean_returns = stock_returns.mean() * 252
         cov_matrix = stock_returns.cov() * 252
@@ -156,10 +189,45 @@ if stock_data_dict:
                                     method='SLSQP', bounds=bounds, constraints=constraints)
         optimal_weights = optimized_result.x
 
+        # Calculate portfolio return, volatility, and Sharpe ratio
+        portfolio_return, portfolio_volatility, sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)
+
         # Display portfolio performance
         st.subheader("Optimal Portfolio Weights")
         portfolio_df = pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights})
         st.write(portfolio_df)
+
+        # Display portfolio quantification
+        st.subheader("Portfolio Quantification")
+        st.write(f"**Expected Annual Return**: {portfolio_return:.2%}")
+        st.write(f"**Annual Volatility (Risk)**: {portfolio_volatility:.2%}")
+        st.write(f"**Sharpe Ratio**: {sharpe_ratio:.2f}")
+
+        # Efficient frontier
+        target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
+        efficient_frontier = []
+        for target_return in target_returns:
+            try:
+                ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                                  {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
+                result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
+                                  method='SLSQP', bounds=bounds, constraints=ef_constraints)
+                efficient_frontier.append(result['fun'])
+            except Exception as e:
+                st.error(f"Error in optimization for return {target_return}: {str(e)}")
+                continue
+
+        # Plot Efficient Frontier
+        st.subheader("Efficient Frontier")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=efficient_frontier, y=target_returns, mode='lines', name='Efficient Frontier'))
+        st.plotly_chart(fig)
+
+        # Suggestion based on risk tolerance and Sharpe ratio
+        if sharpe_ratio > risk_tolerance:
+            st.write("The portfolio has a good risk-adjusted return. Consider investing.")
+        else:
+            st.write("The portfolio may not meet your risk-adjusted return expectations. Consider adjusting your allocation.")
 
 else:
     st.write("No stock data available for the selected sector.")
