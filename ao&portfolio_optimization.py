@@ -44,9 +44,9 @@ def analyze_rsi(rsi_value):
 
 # Function to analyze Awesome Oscillator (AO)
 def analyze_ao(ao_value):
-    if ao_value > 0:
+    if ao_value.iloc[-1] > 0:
         return 'Bullish', 'Buy signal'
-    elif ao_value < 0:
+    elif ao_value.iloc[-1] < 0:
         return 'Bearish', 'Sell signal'
     else:
         return 'Neutral', 'Hold'
@@ -131,7 +131,7 @@ if stock_data_dict:
     latest_rsi = rsi_data.iloc[-1]
 
     # Analyze AO and RSI
-    ao_signal, ao_trend = analyze_ao(latest_ao)
+    ao_signal, ao_trend = analyze_ao(ao_data)
     rsi_signal, rsi_trend = analyze_rsi(latest_rsi)
 
     # Display AO and RSI values
