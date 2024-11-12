@@ -131,7 +131,7 @@ if stock_data_dict:
     latest_rsi = rsi_data.iloc[-1]
 
     # Analyze AO and RSI
-    ao_signal, ao_trend = analyze_ao(ao_data)
+    ao_signal, ao_trend = analyze_ao(pd.Series([latest_ao]))
     rsi_signal, rsi_trend = analyze_rsi(latest_rsi)
 
     # Display AO and RSI values
@@ -231,3 +231,4 @@ if stock_data_dict:
 
 else:
     st.write("No stock data available for the selected sector.")
+
