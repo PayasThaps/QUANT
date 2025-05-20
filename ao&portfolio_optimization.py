@@ -6,7 +6,7 @@ import plotly.graph_objs as go
 from scipy.optimize import minimize
 import time
 
-# Function to download stock data with retries and caching using Streamlit's cache
+# ------------------ Caching Stock Data with Retry ------------------
 @st.cache_data
 def download_data_with_retry(ticker, start_date, end_date, interval='1d', retries=5, delay=5):
     for i in range(retries):
@@ -14,17 +14,16 @@ def download_data_with_retry(ticker, start_date, end_date, interval='1d', retrie
             data = yf.download(ticker, start=start_date, end=end_date, interval=interval)
             if not data.empty:
                 return data
-        except Exception as e:
+        except Exception:
             time.sleep(delay)
-    return pd.DataFrame()  # Return empty DataFrame if all retries fail
+    return pd.DataFrame()
 
-# Function to calculate Awesome Oscillator (AO)
+# ------------------ Technical Indicators ------------------
 def awesome_oscillator(stock_data):
     median_price = (stock_data['High'] + stock_data['Low']) / 2
     ao = median_price.rolling(window=5).mean() - median_price.rolling(window=34).mean()
     return ao
 
-# Function to calculate RSI
 def calculate_rsi(stock_data, periods=14):
     delta = stock_data['Adj Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -33,7 +32,6 @@ def calculate_rsi(stock_data, periods=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-# Function to analyze RSI
 def analyze_rsi(rsi_value):
     if rsi_value > 70:
         return 'Overbought (Sell signal)', 'Bearish'
@@ -42,7 +40,6 @@ def analyze_rsi(rsi_value):
     else:
         return 'Neutral', 'Neutral'
 
-# Function to analyze Awesome Oscillator (AO)
 def analyze_ao(ao_value):
     if ao_value.iloc[-1] > 0:
         return 'Bullish', 'Buy signal'
@@ -51,13 +48,16 @@ def analyze_ao(ao_value):
     else:
         return 'Neutral', 'Hold'
 
-# Function to calculate the Beta of a stock
+# ------------------ Beta Calculation ------------------
 def calculate_beta(stock_returns, market_returns):
     covariance_matrix = np.cov(stock_returns, market_returns)
     beta = covariance_matrix[0, 1] / covariance_matrix[1, 1]
     return beta
 
-# List of NIFTY 50 companies and their sectors
+# ------------------ App Layout ------------------
+st.title("📊 NIFTY 50 Technical & Portfolio Optimization Dashboard")
+
+# ------------------ Sidebar Inputs ------------------
 nifty50_stocks = {
     'RELIANCE.NS': 'Energy', 'TCS.NS': 'IT', 'HDFCBANK.NS': 'Financials', 'INFY.NS': 'IT',
     'ICICIBANK.NS': 'Financials', 'HINDUNILVR.NS': 'Consumer Goods', 'ITC.NS': 'Consumer Goods',
@@ -77,158 +77,118 @@ nifty50_stocks = {
     'DABUR.NS': 'Consumer Goods'
 }
 
-# Parameters
 market_ticker = '^NSEI'
-risk_free_rate = 0.0677  # Risk-free rate (e.g., 6.77%)
+risk_free_rate = 0.0677
 start_date_default = '2020-01-01'
 end_date_default = '2024-01-01'
 
-# Streamlit app layout
-st.title("NIFTY 50 CAPM & Industry-wise Analysis Dashboard")
-
-# Sidebar inputs
-st.sidebar.header("User Input")
-selected_sector = st.sidebar.selectbox('Select Sector:', list(set(nifty50_stocks.values())), index=0)
+# Sidebar Inputs
+selected_sector = st.sidebar.selectbox('Select Sector:', sorted(set(nifty50_stocks.values())))
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime(start_date_default))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime(end_date_default))
+interval = st.sidebar.selectbox("Data Interval:", ['1d', '1wk', '1mo'], index=0)
+investment_amount = st.sidebar.number_input("Investment Amount (₹):", min_value=1000, value=100000, step=1000)
+risk_tolerance = st.sidebar.slider("Risk Tolerance (0-Low ➡️ 1-High):", 0.0, 1.0, 0.5)
 
-# Choose data interval (daily, weekly, monthly)
-interval = st.sidebar.selectbox("Select Data Interval:", ['1d', '1wk', '1mo'], index=0)
-
-# Validate dates
 if start_date > end_date:
-    st.error("End date must be after the start date.")
+    st.error("❌ End date must be after start date.")
     st.stop()
 
-# Investment and Risk input
-investment_amount = st.sidebar.number_input("Investment Amount (₹):", min_value=1000, value=100000, step=1000)
-risk_tolerance = st.sidebar.slider("Risk Tolerance (0-1):", 0.0, 1.0, 0.5)
-
-# Download market data with selected interval
+# ------------------ Market Data ------------------
 market_data = download_data_with_retry(market_ticker, start_date, end_date, interval)
 
-# Filter stocks by selected sector
-stocks = [stock for stock, sector in nifty50_stocks.items() if sector == selected_sector]
-
-# Stock data dictionary
+# ------------------ Sector-wise Stock Data ------------------
+sector_stocks = [s for s, sector in nifty50_stocks.items() if sector == selected_sector]
 stock_data_dict = {}
-for stock in stocks:
-    stock_data = download_data_with_retry(stock, start_date, end_date, interval)
-    if not stock_data.empty:
-        stock_data_dict[stock] = stock_data
+for stock in sector_stocks:
+    data = download_data_with_retry(stock, start_date, end_date, interval)
+    if not data.empty:
+        stock_data_dict[stock] = data
 
-# Continue if data is available
-if stock_data_dict:
-    selected_stock = st.sidebar.selectbox('Select Stock for AO and RSI:', list(stock_data_dict.keys()), index=0)
-    stock_data = stock_data_dict[selected_stock]
+if not stock_data_dict:
+    st.warning("No stock data available for selected sector.")
+    st.stop()
 
-    # Calculate Awesome Oscillator and RSI
-    ao_data = awesome_oscillator(stock_data)
-    rsi_data = calculate_rsi(stock_data)
+# ------------------ Technical Analysis ------------------
+selected_stock = st.sidebar.selectbox('Select Stock for Technical Indicators:', list(stock_data_dict.keys()))
+stock_data = stock_data_dict[selected_stock]
+ao_data = awesome_oscillator(stock_data)
+rsi_data = calculate_rsi(stock_data)
+latest_ao = ao_data.iloc[-1]
+latest_rsi = rsi_data.iloc[-1]
+ao_signal, ao_trend = analyze_ao(pd.Series([latest_ao]))
+rsi_signal, rsi_trend = analyze_rsi(latest_rsi)
 
-    # Latest AO and RSI values
-    latest_ao = ao_data.iloc[-1]
-    latest_rsi = rsi_data.iloc[-1]
+st.subheader(f"📈 Technical Analysis: {selected_stock}")
+st.write(f"**Awesome Oscillator (AO):** {latest_ao:.2f} → {ao_signal}")
+st.line_chart(ao_data)
+st.write(f"**Relative Strength Index (RSI):** {latest_rsi:.2f} → {rsi_signal}")
+st.line_chart(rsi_data)
 
-    # Analyze AO and RSI
-    ao_signal, ao_trend = analyze_ao(pd.Series([latest_ao]))
-    rsi_signal, rsi_trend = analyze_rsi(latest_rsi)
+# ------------------ Portfolio Analysis ------------------
+adj_close_df = pd.DataFrame({ticker: data['Adj Close'] for ticker, data in stock_data_dict.items()})
+stock_returns = adj_close_df.pct_change().dropna()
+market_returns = market_data['Adj Close'].pct_change().dropna()
+stock_returns, market_returns = stock_returns.align(market_returns, join='inner', axis=0)
 
-    # Display AO and RSI values
-    st.subheader(f"Technical Analysis for {selected_stock}")
-    st.write(f"**Latest AO (Awesome Oscillator)**: {latest_ao:.2f} ({ao_signal})")
-    st.write(f"**Latest RSI (Relative Strength Index)**: {latest_rsi:.2f} ({rsi_signal})")
+if stock_returns.empty or market_returns.empty:
+    st.warning("No sufficient return data.")
+    st.stop()
 
-    # Plot AO and RSI
-    st.subheader(f"Awesome Oscillator for {selected_stock}")
-    st.line_chart(ao_data)
+betas = {stock: calculate_beta(stock_returns[stock], market_returns) for stock in stock_returns.columns}
+st.subheader("📌 CAPM: Stock Betas")
+st.dataframe(pd.DataFrame(betas.items(), columns=['Stock', 'Beta']))
 
-    st.subheader(f"RSI for {selected_stock}")
-    st.line_chart(rsi_data)
+# Portfolio optimization
+def portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate):
+    port_return = np.dot(weights, mean_returns)
+    port_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+    sharpe = (port_return - risk_free_rate) / port_vol
+    return port_return, port_vol, sharpe
 
-    # Portfolio Optimization and CAPM Analysis (using all available stock data)
-    stock_data = pd.DataFrame({ticker: stock['Adj Close'] for ticker, stock in stock_data_dict.items()})
-    stock_returns = stock_data.pct_change().dropna()
-    market_returns = market_data['Adj Close'].pct_change().dropna()
+def optimize_for_risk(weights, mean_returns, cov_matrix, risk_tolerance, risk_free_rate):
+    ret, vol, _ = portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)
+    return (1 - risk_tolerance) * vol - risk_tolerance * ret
 
-    # Align stock and market data
-    stock_returns, market_returns = stock_returns.align(market_returns, join='inner', axis=0)
+mean_returns = stock_returns.mean() * 252
+cov_matrix = stock_returns.cov() * 252
+num_stocks = len(mean_returns)
+init_weights = np.ones(num_stocks) / num_stocks
+bounds = tuple((0, 1) for _ in range(num_stocks))
+constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
 
-    if not stock_returns.empty and not market_returns.empty:
-        # Vectorized portfolio statistics calculation
-        def portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate):
-            portfolio_return = np.dot(weights, mean_returns)  # Vectorized for return
-            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))  # Vectorized volatility
-            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
-            return portfolio_return, portfolio_volatility, sharpe_ratio
+result = minimize(optimize_for_risk, init_weights,
+                  args=(mean_returns, cov_matrix, risk_tolerance, risk_free_rate),
+                  method='SLSQP', bounds=bounds, constraints=constraints)
 
-        # Optimization function to adjust based on risk appetite
-        def optimize_for_risk(weights, mean_returns, cov_matrix, risk_tolerance, risk_free_rate):
-            portfolio_return, portfolio_volatility, _ = portfolio_statistics(weights, mean_returns, cov_matrix, risk_free_rate)
-            # Minimize risk for low risk tolerance, maximize return for high risk tolerance
-            return (1 - risk_tolerance) * portfolio_volatility - risk_tolerance * portfolio_return
+optimal_weights = result.x
+port_return, port_volatility, sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)
 
-        # Calculate betas for each stock
-        betas = {stock: calculate_beta(stock_returns[stock], market_returns) for stock in stock_returns.columns}
+st.subheader("📊 Optimal Portfolio Allocation")
+st.dataframe(pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights}))
 
-        # Display Betas
-        st.subheader("Betas for Selected Stocks")
-        beta_df = pd.DataFrame(list(betas.items()), columns=['Stock', 'Beta'])
-        st.write(beta_df)
+st.subheader("📈 Portfolio Performance Metrics")
+st.write(f"**Expected Annual Return:** {port_return:.2%}")
+st.write(f"**Annual Volatility:** {port_volatility:.2%}")
+st.write(f"**Sharpe Ratio:** {sharpe_ratio:.2f}")
 
-        # Optimization setup
-        mean_returns = stock_returns.mean() * 252
-        cov_matrix = stock_returns.cov() * 252
-        num_stocks = len(mean_returns)
-        initial_weights = np.array([1.0 / num_stocks] * num_stocks)
-        bounds = tuple((0, 1) for _ in range(num_stocks))
-        constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
+# Efficient Frontier
+st.subheader("🧭 Efficient Frontier")
+target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
+frontier_vol = []
+for target in target_returns:
+    ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                      {'type': 'eq', 'fun': lambda x: np.dot(x, mean_returns) - target}]
+    result = minimize(lambda x: np.sqrt(np.dot(x.T @ cov_matrix, x)), init_weights,
+                      method='SLSQP', bounds=bounds, constraints=ef_constraints)
+    frontier_vol.append(result['fun'])
 
-        # Optimize portfolio based on risk tolerance
-        optimized_result = minimize(optimize_for_risk, initial_weights, args=(mean_returns, cov_matrix, risk_tolerance, risk_free_rate),
-                                    method='SLSQP', bounds=bounds, constraints=constraints)
-        optimal_weights = optimized_result.x
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=frontier_vol, y=target_returns, mode='lines', name='Efficient Frontier'))
+st.plotly_chart(fig)
 
-        # Calculate portfolio return, volatility, and Sharpe ratio
-        portfolio_return, portfolio_volatility, sharpe_ratio = portfolio_statistics(optimal_weights, mean_returns, cov_matrix, risk_free_rate)
-
-        # Display portfolio performance
-        st.subheader("Optimal Portfolio Weights")
-        portfolio_df = pd.DataFrame({'Stock': mean_returns.index, 'Weight': optimal_weights})
-        st.write(portfolio_df)
-
-        # Display portfolio quantification
-        st.subheader("Portfolio Quantification")
-        st.write(f"**Expected Annual Return**: {portfolio_return:.2%}")
-        st.write(f"**Annual Volatility (Risk)**: {portfolio_volatility:.2%}")
-        st.write(f"**Sharpe Ratio**: {sharpe_ratio:.2f}")
-
-        # Efficient frontier
-        target_returns = np.linspace(mean_returns.min(), mean_returns.max(), 100)
-        efficient_frontier = []
-        for target_return in target_returns:
-            try:
-                ef_constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-                                  {'type': 'eq', 'fun': lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[0] - target_return}]
-                result = minimize(lambda x: portfolio_statistics(x, mean_returns, cov_matrix, risk_free_rate)[1], initial_weights,
-                                  method='SLSQP', bounds=bounds, constraints=ef_constraints)
-                efficient_frontier.append(result['fun'])
-            except Exception as e:
-                st.error(f"Error in optimization for return {target_return}: {str(e)}")
-                continue
-
-        # Plot Efficient Frontier
-        st.subheader("Efficient Frontier")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=efficient_frontier, y=target_returns, mode='lines', name='Efficient Frontier'))
-        st.plotly_chart(fig)
-
-        # Suggestion based on risk tolerance and Sharpe ratio
-        if sharpe_ratio > risk_tolerance:
-            st.write("The portfolio has a good risk-adjusted return. Consider investing.")
-        else:
-            st.write("The portfolio may not meet your risk-adjusted return expectations. Consider adjusting your allocation.")
-
+# Recommendation
+if sharpe_ratio > risk_tolerance:
+    st.success("✅ Portfolio has a favorable risk-adjusted return. Suitable for investment.")
 else:
-    st.write("No stock data available for the selected sector.")
-
+    st.warning("⚠️ Portfolio may not align with your risk tolerance. Consider adjusting allocations.")
