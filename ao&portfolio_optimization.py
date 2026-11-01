@@ -25,6 +25,7 @@ sectors = list(nifty_50_stocks.values())
 # Sidebar controls
 start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2022-01-01"))
 end_date = st.sidebar.date_input("End Date", pd.to_datetime("2024-12-31"))
+risk_free_rate = st.sidebar.number_input("Risk-free Rate (annual)", 0.0, 0.2, 0.065, step=0.005, format="%.3f")
 
 # Fetch data
 @st.cache_data
@@ -35,44 +36,59 @@ def load_price_data(tickers, start, end):
 df = load_price_data(tickers, start_date, end_date)
 returns = df.pct_change().dropna()
 
-# Portfolio optimization
-def calculate_portfolio_variance(weights, cov_matrix):
-    return weights.T @ cov_matrix @ weights
+# Portfolio optimization (annualised, so the optimizer works with well-scaled numbers)
+TRADING_DAYS = 252
+mean_returns = returns.mean().values * TRADING_DAYS
+cov_matrix = LedoitWolf().fit(returns).covariance_ * TRADING_DAYS
+num_assets = len(mean_returns)
+bounds = [(0, 1)] * num_assets
+equal_weights = np.full(num_assets, 1 / num_assets)
+sum_to_one = {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
 
-def get_efficient_frontier(returns, points=50):
-    mean_returns = returns.mean()
-    cov_matrix = LedoitWolf().fit(returns).covariance_
-    num_assets = len(mean_returns)
+def portfolio_risk(weights):
+    return np.sqrt(weights @ cov_matrix @ weights)
+
+def portfolio_return(weights):
+    return weights @ mean_returns
+
+def optimize(objective, constraints):
+    res = minimize(objective, equal_weights, method='SLSQP', bounds=bounds,
+                   constraints=constraints, options={'ftol': 1e-12, 'maxiter': 1000})
+    return res.x if res.success else None
+
+def get_efficient_frontier(points=50):
+    # Trace the frontier from the minimum-variance portfolio up to the highest-return asset
+    min_var_weights = optimize(lambda w: w @ cov_matrix @ w, [sum_to_one])
+    targets = np.linspace(portfolio_return(min_var_weights), mean_returns.max(), points)
 
     results = {"Returns": [], "Risk": [], "Weights": []}
-    bounds = [(0, 1)] * num_assets
-    constraints = {'type': 'eq', 'fun': lambda x: np.sum(x) - 1}
-
-    for _ in range(points):
-        guess = np.random.dirichlet(np.ones(num_assets), size=1)[0]
-        res = minimize(
-            calculate_portfolio_variance, guess,
-            args=(cov_matrix,), method='SLSQP',
-            bounds=bounds, constraints=constraints
-        )
-        if res.success:
-            port_variance = res.fun
-            port_return = np.sum(res.x * mean_returns)
-            results["Returns"].append(port_return)
-            results["Risk"].append(np.sqrt(port_variance))
-            results["Weights"].append(res.x)
+    for target in targets:
+        hit_target = {'type': 'eq', 'fun': lambda w, t=target: portfolio_return(w) - t}
+        weights = optimize(lambda w: w @ cov_matrix @ w, [sum_to_one, hit_target])
+        if weights is not None:
+            results["Returns"].append(portfolio_return(weights))
+            results["Risk"].append(portfolio_risk(weights))
+            results["Weights"].append(weights)
 
     return pd.DataFrame(results)
 
-frontier = get_efficient_frontier(returns)
+def get_max_sharpe_weights():
+    return optimize(lambda w: -(portfolio_return(w) - risk_free_rate) / portfolio_risk(w), [sum_to_one])
+
+frontier = get_efficient_frontier()
+max_sharpe_weights = get_max_sharpe_weights()
 
 # Plotting
 def plot_efficient_frontier(frontier_df):
     fig, ax = plt.subplots(figsize=(10, 6))
-    scatter = ax.scatter(frontier_df['Risk'], frontier_df['Returns'], c=frontier_df['Returns'] / frontier_df['Risk'], cmap='viridis')
+    sharpe = (frontier_df['Returns'] - risk_free_rate) / frontier_df['Risk']
+    scatter = ax.scatter(frontier_df['Risk'], frontier_df['Returns'], c=sharpe, cmap='viridis')
+    ax.scatter(portfolio_risk(max_sharpe_weights), portfolio_return(max_sharpe_weights),
+               marker='*', s=300, c='red', label='Max Sharpe')
     ax.set_title("Efficient Frontier")
-    ax.set_xlabel("Risk (Std. Deviation)")
-    ax.set_ylabel("Expected Return")
+    ax.set_xlabel("Risk (Annual Std. Deviation)")
+    ax.set_ylabel("Expected Annual Return")
+    ax.legend()
     fig.colorbar(scatter, label="Sharpe Ratio")
     st.pyplot(fig)
 
@@ -96,14 +112,17 @@ plot_correlation_matrix(returns)
 st.subheader("3️⃣ Efficient Frontier")
 plot_efficient_frontier(frontier)
 
-# Show top optimal portfolio
-top_portfolio = frontier.iloc[frontier['Returns'].idxmax()]
+# Show the max-Sharpe portfolio (yfinance sorts columns, so label weights from returns.columns)
 weights_df = pd.DataFrame({
-    "Ticker": tickers,
-    "Sector": sectors,
-    "Weight": top_portfolio["Weights"]
+    "Ticker": returns.columns,
+    "Sector": [nifty_50_stocks[t] for t in returns.columns],
+    "Weight": max_sharpe_weights.round(4)
 }).sort_values(by="Weight", ascending=False)
 
-st.subheader("4️⃣ Suggested Optimal Portfolio")
+st.subheader("4️⃣ Suggested Optimal Portfolio (Max Sharpe)")
+col1, col2, col3 = st.columns(3)
+col1.metric("Expected Annual Return", f"{portfolio_return(max_sharpe_weights):.1%}")
+col2.metric("Annual Risk", f"{portfolio_risk(max_sharpe_weights):.1%}")
+col3.metric("Sharpe Ratio", f"{(portfolio_return(max_sharpe_weights) - risk_free_rate) / portfolio_risk(max_sharpe_weights):.2f}")
 st.dataframe(weights_df)
 
