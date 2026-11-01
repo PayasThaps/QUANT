@@ -29,7 +29,7 @@ end_date = st.sidebar.date_input("End Date", pd.to_datetime("2024-12-31"))
 # Fetch data
 @st.cache_data
 def load_price_data(tickers, start, end):
-    data = yf.download(tickers, start=start, end=end)["Adj Close"]
+    data = yf.download(tickers, start=start, end=end, auto_adjust=True)["Close"]
     return data.dropna()
 
 df = load_price_data(tickers, start_date, end_date)
